@@ -37,6 +37,8 @@ Put the downloaded maps in "dataset/maps", and dataset in "dataset/navsim_logs" 
 python navsim/planning/script/run_training_metric_caching.py
 python navsim/planning/script/run_dataset_caching.py
 ```
+Change "cache_data=True" in [pad_agent](navsim/agents/pad/pad_agent.py) during running "run_dataset_caching.py".
+
 3. train navsim model
 ```bash
 python navsim/planing/script/run_training.py

@@ -15,7 +15,7 @@ class PadConfig:
     bev_map: bool=False
     bev_agent: bool=False
     
-    proposal_num: int = 32
+    proposal_num: int = 64
     point_cloud_range= [-32, -32, 0.0, 32, 32,4.0]
     num_points_in_pillar: int=4
 

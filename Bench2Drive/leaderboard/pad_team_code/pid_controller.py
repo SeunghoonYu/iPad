@@ -30,7 +30,7 @@ class PID(object):
 class PIDController(object):
 
     def __init__(self, turn_KP=0.75, turn_KI=0.75, turn_KD=0.3, turn_n=40, speed_KP=5.0, speed_KI=0.5, speed_KD=1.0,
-                 speed_n=40, max_throttle=0.75, brake_speed=0.4, brake_ratio=1.1, clip_delta=0.25, aim_dist=6.0,
+                 speed_n=40, max_throttle=0.75, brake_speed=0.4, brake_ratio=1.1, clip_delta=0.25, aim_dist=12.0,
                  angle_thresh=0.3, dist_thresh=10):
 
         self.turn_controller = PID(K_P=turn_KP, K_I=turn_KI, K_D=turn_KD, n=turn_n)
@@ -87,7 +87,7 @@ class PIDController(object):
             angle_final = angle
 
         #desired_speed=np.clip(desired_speed,a_min=0,a_max=16)
-        angle_final=np.clip(angle_final,a_min=-0.3,a_max=0.3)
+        #angle_final=np.clip(angle_final,a_min=-0.3,a_max=0.3)
 
         steer = self.turn_controller.step(angle_final)
         steer = np.clip(steer, -1.0, 1.0)
