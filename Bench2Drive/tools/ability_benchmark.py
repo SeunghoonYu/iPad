@@ -189,7 +189,7 @@ def main(args):
 if __name__=='__main__':
     argparser = argparse.ArgumentParser(description=__doc__)
     argparser.add_argument('-f', '--file', nargs=None, default="leaderboard/data/bench2drive220.xml", help='route file')
-    argparser.add_argument('-r', '--result_file', nargs=None, default="/home/ke/PAD/exp/new_result/B2d32_064_share/05.10_00.41/eval_pad7/merged.json", help='result json file')
+    argparser.add_argument('-r', '--result_file', nargs=None, default="./eval_pad/merged.json", help='result json file')
     argparser.add_argument('-t', '--host', default='localhost', help='IP of the host server (default: localhost)')
     argparser.add_argument('-p', '--port', nargs=1, default=20007, help='carla rpc port')
     args = argparser.parse_args()
