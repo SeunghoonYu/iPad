@@ -174,52 +174,134 @@ class PadAgent(AbstractAgent):
             for token, town_name, proposal,target_traj, comfort, dist, xy,global_conners,local_corners in zip(targets["token"], targets["town_name"], proposals.cpu().numpy(),  target_trajectory.cpu().numpy(), comforts.cpu().numpy(), dists.cpu().numpy(), xys, global_ego_corners_centers,ego_corners_ttc.cpu().numpy()):
                 all_lane_points = self.map_infos[town_name[:6]]
 
-                dist_to_cur = torch.linalg.norm(all_lane_points[:,:2] - xy, dim=-1)
+                # [L, 4] = (x, y, width, lane_id)
+                # 장치/dtype 맞추기
+                all_lane_points = all_lane_points.to(xys.device).to(xys.dtype)
 
+                # 현재 위치(xy)로부터 반경 dist 이내의 차선만 추출
+                dist_to_cur = torch.linalg.norm(all_lane_points[:, :2] - xy, dim=-1)
                 nearby_point = all_lane_points[dist_to_cur < dist]
 
-                lane_xy = nearby_point[:, :2]
-                lane_width = nearby_point[:, 2]
-                lane_id = nearby_point[:, -1]
+                # proposals/GT의 모양 파악
+                # proposal: [P, T, 3]  (xyθ),  global_conners: [P, T, K, 2]
+                P, T, K = global_conners.shape[0], global_conners.shape[1], global_conners.shape[2]
 
-                dist_to_lane = torch.linalg.norm(global_conners[None] - lane_xy[:, None, None, None], dim=-1)
+                def _empty_ego_areas():
+                    # [P, T] bool 텐서들로 구성 -> 마지막에 [P, T, 3]으로 스택
+                    _on_road_all = torch.zeros((P, T), dtype=torch.bool, device=global_conners.device)
+                    _on_route_all = torch.zeros((P, T), dtype=torch.bool, device=global_conners.device)
+                    _multi_lanes = torch.zeros((P, T), dtype=torch.bool, device=global_conners.device)
+                    return torch.stack([_multi_lanes, _on_road_all, _on_route_all], dim=-1)  # [P, T, 3]
 
-                on_road = dist_to_lane < lane_width[:, None, None, None]
+                if nearby_point.numel() == 0:
+                    # 근방에 차선 자체가 없으면 안전 탈출 (offroad/비도로 씬 등)
+                    ego_areas = _empty_ego_areas()
+                else:
+                    lane_xy   = nearby_point[:, :2]                               # [L, 2]
+                    lane_width = nearby_point[:, 2]                               # [L]
+                    lane_id   = nearby_point[:, -1]                               # [L]
 
-                on_road_all = on_road.any(0).all(-1)
+                    # 유효 차선만 남기기: 폭>0, finite
+                    valid_lane = torch.isfinite(lane_width) & (lane_width > 0)
+                    lane_xy    = lane_xy[valid_lane]
+                    lane_width = lane_width[valid_lane]
+                    lane_id    = lane_id[valid_lane]
 
-                nearest_lane = torch.argmin(dist_to_lane - lane_width[:, None, None,None], dim=0)
+                    if lane_xy.shape[0] == 0:
+                        ego_areas = _empty_ego_areas()
+                    else:
+                        # [L, P, T, K] 각 코너/센터까지의 거리
+                        dist_to_lane = torch.linalg.norm(global_conners[None] - lane_xy[:, None, None, None], dim=-1)
 
-                nearest_lane_id=lane_id[nearest_lane]
+                        # 차선 폭 안에 들어오면 on-road
+                        # (lane_width: [L] -> [L,1,1,1]로 브로드캐스트)
+                        shifted = dist_to_lane - lane_width[:, None, None, None]
 
-                center_nearest_lane_id=nearest_lane_id[:,:,-1]
+                        # L이 0이 아닌 게 확정이므로 .min(dim=0)로 안전하게 argmin/값 동시 계산
+                        dist_min, nearest_lane = shifted.min(dim=0)               # [P, T, K] 각각의 최근접 차선 idx
+                        on_road = (dist_to_lane < lane_width[:, None, None, None])# [L, P, T, K] bool
+                        on_road_all = on_road.any(0).all(-1)                      # [P, T] 모든 코너가 어떤 차선 안에 있는가
 
-                nearest_road_id = torch.round(center_nearest_lane_id)
+                        # 최근접 차선 id 맵
+                        # nearest_lane: [P, T, K] -> lane_id[nearest_lane]: 같은 shape
+                        nearest_lane_id = lane_id[nearest_lane]                   # [P, T, K]
 
-                target_road_id = torch.unique(nearest_road_id[-1])
+                        # 마지막 K(센터) 인덱스가 center임을 가정하고 경로 id 취득
+                        center_nearest_lane_id = nearest_lane_id[:, :, -1]        # [P, T]
+                        nearest_road_id = torch.round(center_nearest_lane_id)     # [P, T]
 
-                on_route_all = torch.isin(nearest_road_id, target_road_id)
-                # in_multiple_lanes: if
-                # - more than one drivable polygon contains at least one corner
-                # - no polygon contains all corners
-                corner_nearest_lane_id=nearest_lane_id[:,:,:-1]
+                        # GT(마지막 P-1이 GT이면 아래처럼 사용, 아니라면 원 코드의 의도대로 유지)
+                        target_road_id = torch.unique(nearest_road_id[-1])        # [*] 이 샘플의 GT가 지나간 도로 id set
+                        on_route_all = torch.isin(nearest_road_id, target_road_id) # [P, T]
 
-                batch_multiple_lanes_mask = (corner_nearest_lane_id!=corner_nearest_lane_id[:,:,:1]).any(-1)
+                        # 여러 차선을 동시에 밟는가: 코너 기준으로 lane id가 섞이면 True
+                        corner_nearest_lane_id = nearest_lane_id[:, :, :-1]       # [P, T, K-1] (코너들)
+                        batch_multiple_lanes_mask = (corner_nearest_lane_id != corner_nearest_lane_id[:, :, :1]).any(-1)  # [P, T]
 
-                on_road_all=on_road_all==on_road_all[-1:]
-                # on_road_all = on_road_all | ~on_road_all[-1:]# on road or groundtruth offroad
+                        # on_road_all을 GT on/off-road 패턴과 정렬(원 코드 유지)
+                        on_road_all = (on_road_all == on_road_all[-1:])
 
-                ego_areas=torch.stack([batch_multiple_lanes_mask,on_road_all,on_route_all],dim=-1)
+                        ego_areas = torch.stack([batch_multiple_lanes_mask, on_road_all, on_route_all], dim=-1)  # [P, T, 3]
 
                 data_dict = {
                     "fut_box_corners": metric_cache_paths[token],
                     "_ego_coords": local_corners,
                     "target_traj": target_traj,
-                    "proposal":proposal,
+                    "proposal": proposal,
                     "comfort": comfort,
-                    "ego_areas": ego_areas.cpu().numpy(),
+                    "ego_areas": ego_areas.detach().to('cpu', non_blocking=True).numpy(),
                 }
                 data_points.append(data_dict)
+
+                
+                # all_lane_points = self.map_infos[town_name[:6]]
+
+                # dist_to_cur = torch.linalg.norm(all_lane_points[:,:2] - xy, dim=-1)
+
+                # nearby_point = all_lane_points[dist_to_cur < dist]
+
+                # lane_xy = nearby_point[:, :2]
+                # lane_width = nearby_point[:, 2]
+                # lane_id = nearby_point[:, -1]
+
+                # dist_to_lane = torch.linalg.norm(global_conners[None] - lane_xy[:, None, None, None], dim=-1)
+
+                # on_road = dist_to_lane < lane_width[:, None, None, None]
+
+                # on_road_all = on_road.any(0).all(-1)
+
+                # nearest_lane = torch.argmin(dist_to_lane - lane_width[:, None, None,None], dim=0)
+
+                # nearest_lane_id=lane_id[nearest_lane]
+
+                # center_nearest_lane_id=nearest_lane_id[:,:,-1]
+
+                # nearest_road_id = torch.round(center_nearest_lane_id)
+
+                # target_road_id = torch.unique(nearest_road_id[-1])
+
+                # on_route_all = torch.isin(nearest_road_id, target_road_id)
+                # # in_multiple_lanes: if
+                # # - more than one drivable polygon contains at least one corner
+                # # - no polygon contains all corners
+                # corner_nearest_lane_id=nearest_lane_id[:,:,:-1]
+
+                # batch_multiple_lanes_mask = (corner_nearest_lane_id!=corner_nearest_lane_id[:,:,:1]).any(-1)
+
+                # on_road_all=on_road_all==on_road_all[-1:]
+                # # on_road_all = on_road_all | ~on_road_all[-1:]# on road or groundtruth offroad
+
+                # ego_areas=torch.stack([batch_multiple_lanes_mask,on_road_all,on_route_all],dim=-1)
+
+                # data_dict = {
+                #     "fut_box_corners": metric_cache_paths[token],
+                #     "_ego_coords": local_corners,
+                #     "target_traj": target_traj,
+                #     "proposal":proposal,
+                #     "comfort": comfort,
+                #     "ego_areas": ego_areas.cpu().numpy(),
+                # }
+                # data_points.append(data_dict)
         else:
             data_points = [
                 {

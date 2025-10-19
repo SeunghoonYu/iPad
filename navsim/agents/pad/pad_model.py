@@ -35,6 +35,9 @@ class PadModel(nn.Module):
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         ego_status: torch.Tensor = features["ego_status"][:,-1]
         camera_feature: torch.Tensor = features["camera_feature"]
+        
+        if camera_feature.dtype == torch.uint8:
+            camera_feature = camera_feature.float() / 255.0
 
         batch_size = ego_status.shape[0]
 

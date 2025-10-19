@@ -29,7 +29,7 @@ sys.path.append(Bench2Drive_ROOT + 'leaderboard/pad_team_code')
 sys.path.append(Bench2Drive_ROOT + 'scenario_runner')
 
 
-ROUTES=Bench2Drive_ROOT +"leaderboard/data/shuffle.xml"
+ROUTES=Bench2Drive_ROOT +"leaderboard/data/drivetransformer_bench2drive_dev10.xml"
 
 os.environ["SAVE_PATH"] = Bench2Drive_ROOT+"/eval_pad/"
 
@@ -51,7 +51,7 @@ os.environ["CHECKPOINT_ENDPOINT"]=os.environ["SAVE_PATH"]+"eval.json"
 os.environ["SCENARIO_RUNNER_ROOT"] = "scenario_runner"
 os.environ["LEADERBOARD_ROOT"] = "leaderboard"
 
-checkpoint_path=None
+checkpoint_path="/data1/shyuA6000/iPad/ckpts/ipad_fullset_training_20ep.ckpt"
 
 os.environ["TEAM_CONFIG"]=Bench2Drive_ROOT +"leaderboard/pad_team_code/pad_config.py+"+checkpoint_path
 

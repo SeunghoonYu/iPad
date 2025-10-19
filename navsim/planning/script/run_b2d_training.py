@@ -15,12 +15,55 @@ from navsim.common.dataclasses import SceneFilter
 from navsim.common.dataloader import SceneLoader
 from navsim.planning.training.dataset import CacheOnlyDataset, Dataset
 from navsim.planning.training.agent_lightning_module import AgentLightningModule
+from typing import Any, Dict, List, Union
+import torch
 
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config/training"
 CONFIG_NAME = "b2d_training"
 
+def collate_trim_to_min(batch: List[Any]) -> Any:
+    """
+    기본 default_collate가 가변 길이 첫 축(T) 때문에 실패할 때,
+    배치 내 공통 최소 길이(T_min)로 잘라서 스택해주는 collate 함수.
+    - 텐서/ndarray이고 첫 축만 다르고 나머지 축은 같은 경우에만 트림.
+    - dict/list/tuple는 재귀 처리.
+    - 스칼라는 기본 텐서 변환.
+    """
+    if len(batch) == 0:
+        return batch
+
+    elem = batch[0]
+
+    # dict 재귀
+    if isinstance(elem, dict):
+        out: Dict[str, Any] = {}
+        for k in elem.keys():
+            out[k] = collate_trim_to_min([b[k] for b in batch])
+        return out
+
+    # list/tuple 재귀
+    if isinstance(elem, (list, tuple)):
+        transposed = list(zip(*batch))
+        return [collate_trim_to_min(list(x)) for x in transposed]
+
+    # 텐서/넘파이 처리
+    if isinstance(elem, (torch.Tensor, np.ndarray)):
+        tensors = [torch.as_tensor(x) for x in batch]
+        # 모두 같은 shape면 그대로 stack
+        if all(t.shape == tensors[0].shape for t in tensors):
+            return torch.utils.data._utils.collate.default_collate(tensors)
+        # 첫 축만 다르고 나머지 축 동일하면 최소 길이로 트림 후 stack
+        if all(t.dim() >= 1 for t in tensors) and all(t.shape[1:] == tensors[0].shape[1:] for t in tensors):
+            tmin = min(t.shape[0] for t in tensors)
+            trimmed = [t[:tmin] for t in tensors]
+            return torch.stack(trimmed, dim=0)
+        # 그 외엔 기본 동작 (여기서 실패할 수 있지만, 우리가 다루는 케이스는 위 분기로 커버됨)
+        return torch.utils.data._utils.collate.default_collate(tensors)
+
+    # 스칼라 등
+    return torch.utils.data._utils.collate.default_collate(batch)
 
 def build_datasets(cfg: DictConfig, agent: AbstractAgent) -> Tuple[Dataset, Dataset]:
     """
@@ -123,9 +166,9 @@ def main(cfg: DictConfig) -> None:
         train_data, val_data = build_datasets(cfg, agent)
 
     logger.info("Building Datasets")
-    train_dataloader = DataLoader(train_data, **cfg.dataloader.params, shuffle=True,drop_last=True)
+    train_dataloader = DataLoader(train_data, **cfg.dataloader.params, shuffle=True,drop_last=True, collate_fn=collate_trim_to_min)
     logger.info("Num training samples: %d", len(train_data))
-    val_dataloader = DataLoader(val_data, **cfg.dataloader.params, shuffle=False,drop_last=True)
+    val_dataloader = DataLoader(val_data, **cfg.dataloader.params, shuffle=False,drop_last=True, collate_fn=collate_trim_to_min)
     logger.info("Num validation samples: %d", len(val_data))
 
     logger.info("Building Trainer")

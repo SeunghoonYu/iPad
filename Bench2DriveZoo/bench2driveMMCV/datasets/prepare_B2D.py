@@ -13,9 +13,9 @@ import argparse
 # camera coordinate system, and lidar coordinate system) to the right-handed coordinate system
 # consistent with the nuscenes dataset.
 
-DATAROOT = '../../data/bench2drive'
-MAP_ROOT = '../../data/bench2drive/maps'
-OUT_DIR = '../../data/infos'
+DATAROOT = '/data1/shyuA6000/iPad/Bench2DriveZoo/data/bench2drive'
+MAP_ROOT = '/data1/shyuA6000/iPad/Bench2DriveZoo/data/bench2drive/maps'
+OUT_DIR = '/data1/shyuA6000/iPad/Bench2DriveZoo/data/infos'
 
 MAX_DISTANCE = 75              # Filter bounding boxes that are too far from the vehicle
 FILTER_Z_SHRESHOLD = 10        # Filter bounding boxes that are too high/low from the vehicle
